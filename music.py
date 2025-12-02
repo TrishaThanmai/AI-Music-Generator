@@ -1,94 +1,149 @@
 import os
 from uuid import uuid4
 import requests
+import streamlit as st
+
 from agno.agent import Agent
 from agno.run.agent import RunOutput
 from agno.models.openai import OpenAIChat
 from agno.tools.models_labs import FileType, ModelsLabTools
 from agno.utils.log import logger
-import streamlit as st
 
-# Sidebar: User enters the API keys
-st.sidebar.title("API Key Configuration")
+# -------------------------
+# Logging
+# -------------------------
+logger.setLevel("INFO")
 
-openai_api_key = st.sidebar.text_input("Enter your OpenAI API Key", type="password")
-models_lab_api_key = st.sidebar.text_input("Enter your ModelsLab API Key", type="password")
+# -------------------------
+# Sidebar: API Keys
+# -------------------------
+st.sidebar.title("🔑 API Key Configuration")
 
-# Streamlit App UI
-st.title("🎶 ModelsLab Music Generator")
-prompt = st.text_area("Enter a music generation prompt:", "Generate a 30 second classical music piece", height=100)
+openai_api_key = st.sidebar.text_input(
+    "Enter your OpenAI API Key",
+    type="password"
+)
 
-# Initialize agent only if both API keys are provided
+models_lab_api_key = st.sidebar.text_input(
+    "Enter your ModelsLab API Key",
+    type="password"
+)
+
+# -------------------------
+# Main UI
+# -------------------------
+st.title("🎶 ModelsLab AI Music Generator")
+
+prompt = st.text_area(
+    "Enter your music generation prompt:",
+    value="Generate a 30 second classical instrumental music piece",
+    height=100,
+)
+
+# -------------------------
+# Agent Initialization
+# -------------------------
 if openai_api_key and models_lab_api_key:
+
     agent = Agent(
         name="ModelsLab Music Agent",
-        agent_id="ml_music_agent",
-        model=OpenAIChat(id="gpt-4o", api_key=openai_api_key),
+        model=OpenAIChat(
+            id="gpt-4o",
+            api_key=openai_api_key
+        ),
         show_tool_calls=True,
-        tools=[ModelsLabTools(api_key=models_lab_api_key, wait_for_completion=True, file_type=FileType.MP3)],
-        description="You are an AI agent that can generate music using the ModelsLabs API.",
-        instructions=[
-            "When generating music, use the `generate_media` tool with detailed prompts that specify:",
-            "- The genre and style of music (e.g., classical, jazz, electronic)",
-            "- The instruments and sounds to include",
-            "- The tempo, mood and emotional qualities",
-            "- The structure (intro, verses, chorus, bridge, etc.)",
-            "Create rich, descriptive prompts that capture the desired musical elements.",
-            "Focus on generating high-quality, complete instrumental pieces.",
+        tools=[
+            ModelsLabTools(
+                api_key=models_lab_api_key,
+                wait_for_completion=True,
+                file_type=FileType.MP3
+            )
         ],
         markdown=True,
-        debug_mode=True,
+        description="You are an AI agent that generates high-quality instrumental music using the ModelsLab API.",
+        instructions=[
+            "When generating music, always use the `generate_media` tool with ultra-detailed prompts.",
+            "Include these details:",
+            "- Genre & style",
+            "- Instruments used",
+            "- Tempo & rhythm",
+            "- Mood & emotional tone",
+            "- Song structure (intro / verse / chorus / bridge / outro)",
+            "Create clear, rich and structured prompts to guide the generator.",
+            "Focus on producing complete instrumental music pieces suitable for listening."
+        ],
     )
 
-    if st.button("Generate Music"):
-        if prompt.strip() == "":
-            st.warning("Please enter a prompt first.")
-        else:
-            with st.spinner("Generating music... 🎵"):
-                try:
-                    music: RunOutput = agent.run(prompt)
+    # -------------------------
+    # Generate Button
+    # -------------------------
+    if st.button("🎵 Generate Music"):
 
-                    if music.audio and len(music.audio) > 0:
-                        save_dir = "audio_generations"
-                        os.makedirs(save_dir, exist_ok=True)
+        if not prompt.strip():
+            st.warning("⚠️ Please enter a prompt first.")
+            st.stop()
 
-                        url = music.audio[0].url
-                        response = requests.get(url)
+        with st.spinner("Generating music... Please wait 🎼"):
 
-                        # 🛡️ Validate response
-                        if not response.ok:
-                            st.error(f"Failed to download audio. Status code: {response.status_code}")
-                            st.stop()
+            try:
+                music: RunOutput = agent.run(prompt)
 
-                        content_type = response.headers.get("Content-Type", "")
-                        if "audio" not in content_type:
-                            st.error(f"Invalid file type returned: {content_type}")
-                            st.write("🔍 Debug: Downloaded content was not an audio file.")
-                            st.write("🔗 URL:", url)
-                            st.stop()
+                if not music.audio:
+                    st.error("❌ No audio was returned from ModelsLab.")
+                    st.stop()
 
-                        # ✅ Save audio
-                        filename = f"{save_dir}/music_{uuid4()}.mp3"
-                        with open(filename, "wb") as f:
-                            f.write(response.content)
+                # -------------------------
+                # Download Audio File
+                # -------------------------
+                url = music.audio[0].url
 
-                        # 🎧 Play audio
-                        st.success("Music generated successfully! 🎶")
-                        audio_bytes = open(filename, "rb").read()
-                        st.audio(audio_bytes, format="audio/mp3")
+                response = requests.get(url)
 
-                        st.download_button(
-                            label="Download Music",
-                            data=audio_bytes,
-                            file_name="generated_music.mp3",
-                            mime="audio/mp3"
-                        )
-                    else:
-                        st.error("No audio generated. Please try again.")
+                if not response.ok:
+                    st.error(f"❌ Download failed: HTTP {response.status_code}")
+                    st.stop()
 
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
-                    logger.error(f"Streamlit app error: {e}")
+                # Validate content type
+                content_type = response.headers.get("Content-Type", "")
+                if "audio" not in content_type:
+                    st.error("❌ Invalid file type returned.")
+                    st.write("Returned content-type:", content_type)
+                    st.write("Audio URL:", url)
+                    st.stop()
+
+                # -------------------------
+                # Save Audio
+                # -------------------------
+                save_dir = "audio_generations"
+                os.makedirs(save_dir, exist_ok=True)
+
+                filename = f"{save_dir}/music_{uuid4().hex}.mp3"
+
+                with open(filename, "wb") as f:
+                    f.write(response.content)
+
+                # -------------------------
+                # Play + Download
+                # -------------------------
+                st.success("✅ Music generated successfully!")
+
+                audio_bytes = open(filename, "rb").read()
+                st.audio(
+                    audio_bytes,
+                    format="audio/mp3"
+                )
+
+                st.download_button(
+                    label="⬇️ Download MP3",
+                    data=audio_bytes,
+                    file_name="generated_music.mp3",
+                    mime="audio/mp3"
+                )
+
+            except Exception as e:
+                st.error("❌ An unexpected error occurred.")
+                st.code(str(e))
+                logger.error(f"Music generator failure: {e}")
 
 else:
-    st.sidebar.warning("Please enter both the OpenAI and ModelsLab API keys to use the app.")
+    st.sidebar.warning("⚠️ Please enter BOTH OpenAI and ModelsLab API keys to use the app.")
